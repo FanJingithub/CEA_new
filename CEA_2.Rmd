@@ -238,7 +238,7 @@ DCA_plot<-stdca(data=data.set, outcome="status", ttoutcome="time", timepoint=109
 
 ## 数据分布呈现
 
-将模型的预测风险评分进行从小到大排序，展示各个病例对应的复发时间和是否出现复发、T分期、N分期、CEA情况
+将模型的预测风险评分进行从小到大排序，展示各个病例对应的复发时间和是否出现复发(黑色点表示复发，红色点表示删失)、T分期、N分期、CEA情况
 
 ```{r}
 library(survival)
@@ -331,15 +331,15 @@ for (i in 1:1){
 
 预测1年生存率的校准曲线：
 
-<img src="D:/data_work/CEA/plots/1-year DFS_training.png" style="width:600px;height:600px">
+<img src="D:/data_work/CEA/plots/1-year DFS_training.png" style="width:360px;height:360px">
 
 预测3年生存率的校准曲线：
 
-<img src="D:/data_work/CEA/plots/3-year DFS_training.png" style="width:600px;height:600px">
+<img src="D:/data_work/CEA/plots/3-year DFS_training.png" style="width:360px;height:360px">
 
 预测5年生存率的校准曲线：
 
-<img src="D:/data_work/CEA/plots/5-year DFS_training.png" style="width:600px;height:600px">
+<img src="D:/data_work/CEA/plots/5-year DFS_training.png" style="width:360px;height:360px">
 
 
 
