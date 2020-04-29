@@ -1,0 +1,345 @@
+---
+title: "CEA补充分析结果"
+author: "Fan"
+date: "2020年4月29日"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+setwd("D:\\data_work\\CEA")
+```
+
+## CEA非线性情况的处理——RCS限制性立方样线条处理
+
+进一步明确连续性变量CEA与HR的关系（是否为线性关系），确定CEA进入模型的最佳模式（将连续变量转为分类变量并不是很好的处理方式，将损失大量信息）。
+
+
+```{r}
+setwd("D:\\data_work\\CEA")
+library(readxl)
+All <- read_excel("data\\data_FD_base_postoperative_100days_0130.xlsx")
+
+survival0.status<-All$DFSstatus
+survival0.time<-All$DFS
+data0.CEA1<-All$`CEA-1`
+data0.CEA2<-All$`CEA-2`
+
+data0.TT<-All$`T分期`
+data0.NN<-All$`N分期`
+
+library(survminer)
+
+#===========================================================================================
+index<-which(and(and(is.na(data0.CEA1)==F,is.na(data0.CEA2)==F),
+                 and(is.na(survival0.status)==F, is.na(survival0.time)==F)))
+#length(index)
+data.size = length(index)
+
+survival.status<-survival0.status[index]
+survival.time<-survival0.time[index]
+data.CEA1<-data0.CEA1[index]
+data.CEA2<-data0.CEA2[index]
+
+data.TT<-data0.TT[index]
+data.NN<-data0.NN[index]
+
+library(ggplot2)
+library(rms)
+
+CEA_<-data.CEA2
+CEA_[which(CEA_>50)]<-50
+survival.year<-survival.time/365
+data<-data.frame(CEA=CEA_,time=survival.year,death=survival.status)
+dd <- datadist(data)
+options(datadist='dd')
+
+fit<- cph(Surv(time,death) ~ rcs(CEA,3),data=data)
+dd$limits$CEA[2] <- 5
+fit=update(fit)
+HR<-Predict(fit, CEA,
+            # fun=exp,
+            ref.zero = TRUE)
+
+# P1<-ggplot(HR)
+# P1
+
+P2<-ggplot()+geom_line(data=HR, aes(CEA,yhat),linetype="solid",size=1,alpha = 0.7,colour="red")+
+  geom_ribbon(data=HR, aes(CEA,ymin = lower, ymax = upper),alpha = 0.2,fill="red")
+P2<-P2+theme_classic()+geom_hline(yintercept=0, linetype=2,size=1)+
+  labs(title = "", x="CEA", y="logHR (95%CI)") +
+  scale_x_continuous(breaks = seq(0,50,5))
+```
+
+CEA是否存在非线性的检验：由于非线性部分检验的p值小于0.05，可认为CEA与复发风险存在非线性关系
+```{r}
+anova(fit)
+```
+
+那么CEA与复发风险之间的关系究竟如何。使用RCS策略处理连续性变量CEA，发现CEA=5是一个重要的拐点，大于5和小于5时，CEA与log(HR)都呈线性关系，只是斜率不同（如下图所示）。考虑将CEA分成两段处理，重新建模，C-index有所提升，AUC表现也有改善（超过0.75）。
+```{r}
+P2
+```
+
+
+```{r}
+cc3 <- read_excel("data\\data_FD_CC3_0529.xlsx")
+
+survival0.status<-cc3$DFSstatus
+survival0.time<-cc3$DFS
+data0.CEA1<-cc3$`CEA-1`
+data0.CEA2<-cc3$`CEA-2`
+
+data0.TT<-cc3$`T分期`
+data0.NN<-cc3$`N分期`
+
+index <- which(is.na(data0.CEA2)==F)
+data.size = length(index)
+#data.size
+
+survival.status<-survival0.status[index]
+survival.time<-survival0.time[index]
+data.TT<-data0.TT[index]
+data.NN<-data0.NN[index]
+data.CEA<-data0.CEA2[index]
+
+
+data.TT[which(data.TT=="T1")]="T1-2"
+data.TT[which(data.TT=="T2a")]="T1-2"
+data.TT[which(data.TT=="T2b")]="T1-2"
+# data.TT[which(data.TT=="T3")]="T3"
+# #---------------
+# data.TT[which(data.TT=="T4a")]="T4"
+# data.TT[which(data.TT=="T4b")]="T4"
+data.NN[which(data.NN=="N1a")]="N1"
+data.NN[which(data.NN=="N1b")]="N1"
+data.NN[which(data.NN=="N1c")]="N1"
+data.CEAs<-c(rep(0,data.size))
+data.CEAs[which(data.CEA>=5)]=1
+data.CEAs=factor(data.CEAs)
+
+#-----------------------------------------------------------------------------
+all.X <-data.frame(x.T_=data.TT, x.N_=data.NN,
+                   x.CEA=data.CEAs, x.CEA_=data.CEA, 
+                    time=survival.time, status=survival.status)
+dd <- datadist(all.X)
+options(datadist='dd')
+
+fit <-cph(Surv(time,status)~ x.T_+x.N_+rcs(x.CEA_,3), data=all.X)
+c_index <- survConcordance(Surv(all.X$time,all.X$status)~predict(fit,all.X))$concordance
+c_index
+
+model_predict<-as.vector(predict(fit))
+#cph(Surv(survival.time,survival.status)~ model_predict)
+#survConcordance(Surv(survival.time,survival.status)~model_predict)$concordance
+
+fit <-cph(Surv(time,status)~ x.T_+x.N_, data=all.X)
+TN_predict<-as.vector(predict(fit))
+```
+
+
+## AUC
+
+### 各时点AUC
+此处将分别展示1、3、5年的AUC，发现3年和5年时刻的AUC明显很高，模型预测能力很好。
+
+```{r}
+library(survivalROC)
+library(survival)
+library(ggplot2)
+library(plotROC)
+sroc <- lapply(c(1, 3, 5), function(t){
+  stroc <- survivalROC(Stime = survival.time/365, status = survival.status, marker = model_predict, 
+                       predict.time = t,
+                       method = "KM"  ## KM法
+                       # method = "NNE", span = .25 * 350^(-.2) ## NE法
+  )
+  data.frame(TPF = stroc[["TP"]], FPF = stroc[["FP"]], 
+             c = stroc[["cut.values"]], 
+             time = rep(stroc[["predict.time"]], length(stroc[["FP"]])))
+})
+
+## combine data
+sroclong <- do.call(rbind, sroc)
+sroclong$time<-factor(sroclong$time)
+
+## plot ROC
+pROC<-ggplot(sroclong, aes(x = FPF, y = TPF, label = c, color = time)) + 
+  geom_roc(labels = FALSE, stat = "identity",n.cuts = 20) +
+  style_roc()+
+  ggsci::scale_color_jco()
+
+fine_plot<-pROC+annotate("text",x = .75, y = .25, ## position of text
+              label = paste("AUC of 1 years =", -round(calc_auc(pROC)$AUC[1], 2))) +
+  annotate("text",x = .75, y = .15, ## position of text
+           label=paste("AUC of 3 years =", -round(calc_auc(pROC)$AUC[2], 2)))+
+  annotate("text",x = .75, y = .05, ## position of text
+           label=paste("AUC of 5 years =", -round(calc_auc(pROC)$AUC[3], 2)))
+
+fine_plot
+```
+
+
+### 完整的时间依赖AUC
+
+```{r}
+library(timeROC)
+library(ggplot2)
+library(survivalROC)
+library(dplyr)
+ROC.1<-timeROC(T=survival.time,
+               delta=survival.status,
+               marker=model_predict,
+               cause=1,weighting="marginal",
+               times=quantile(survival.time,probs=seq(0.2,0.8,0.02)),
+               iid=TRUE)
+#ROC.1
+
+time_AUC<-data.frame(time=ROC.1$times,
+                     AUC=ROC.1$AUC,
+                     sd=ROC.1$inference$vect_sd_1,
+                     AUC_upper=ROC.1$AUC+ROC.1$inference$vect_sd_1,
+                     AUC_lower=ROC.1$AUC-ROC.1$inference$vect_sd_1)
+
+ggplot(time_AUC,aes(x=time,y=AUC))+
+  geom_line(colour='red')+
+  scale_y_continuous(limits = c(0.5,1))+
+  geom_ribbon(aes(ymin = AUC_lower,ymax = AUC_upper),alpha = 0.16,fill="red")+
+  theme(panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))
+```
+
+
+## DCA决策曲线
+
+从决策曲线来看，TN_CEA（TN分期联合CEA）模型明显优于TN模型（净获益明显更大）
+
+```{r}
+source("D:\\data_work\\R_sources\\Statistics\\DCA\\Rcode\\stdca.R")
+#Creates a survival object with time to event variable as ttcancer and the event is 
+#cancer. 
+Srv = Surv(survival.time, survival.status)
+data.set<-data.frame(model_predict=model_predict, TN_predict=TN_predict,
+                 time=survival.time,
+                 status=as.integer(survival.status))
+coxmod = coxph(Srv ~ model_predict, data=data.set)
+coxmod_2 = coxph(Srv ~ TN_predict, data=data.set)
+#the probability of failure is calculated by subtracting the probability of 
+#survival from 1. 
+data.set$TN_CEA = c(1- (summary(survfit(coxmod, newdata=data.set), times=1095)$surv))
+data.set$TN_model = c(1- (summary(survfit(coxmod_2, newdata=data.set), times=1095)$surv))
+#Run the decision curve analysis (with a smoother)
+DCA_plot<-stdca(data=data.set, outcome="status", ttoutcome="time", timepoint=1095, 
+                predictors=c("TN_model","TN_CEA"), xstop=0.5, smooth=TRUE)
+# how to transform to ggplot
+```
+
+## 数据分布呈现
+
+将模型的预测风险评分进行从小到大排序，展示各个病例对应的复发时间和是否出现复发、T分期、N分期、CEA情况
+
+```{r}
+library(survival)
+library(survivalROC)
+library(dplyr)
+library(ggplot2)
+library(ComplexHeatmap)
+surv.prob <- unique(survfit(Surv(survival.time,survival.status)~1)$surv)
+
+fit0 <- coxph( Surv(survival.time,survival.status) ~ model_predict, na.action=na.omit)
+fp <- fit0$linear.predictor
+sur_dat<-tibble(fp=as.numeric(fp),
+                time=ifelse(survival.time/365<6,survival.time/365,6),
+                event=survival.status,
+                x1=all.X$x.T_,
+                x2=all.X$x.N_,
+                x3=ifelse(all.X$x.CEA_<50,all.X$x.CEA_,50)) %>% arrange(fp)
+sur_dat$patientid<-1:length(fp)
+sur_dat$event=ifelse(sur_dat$event==0,'alive','death')
+sur_dat$event=factor(sur_dat$event,levels = c("death","alive"))
+exp_dat=sur_dat[,6]
+tmp<-t(as.matrix(exp_dat))
+zero_row_mat = matrix(nrow = 0, ncol = length(sur_dat$x3))
+# col_CEA = circlize::colorRamp2(c(0.001, 1, 50), c("blue", "white", "red"))
+col_CEA = circlize::colorRamp2(c(log(0.001), log(1), log(50)), c("blue", "white", "red"))
+# col_CEA = circlize::colorRamp2(c( log(0.1), log(100)), c("white", "red"))
+ha = HeatmapAnnotation(Risk = anno_points(sur_dat$fp,axis = TRUE, height = unit(50, "cm")),
+                       Time = anno_points(sur_dat$time, axis = TRUE,
+                                          pch = 16, default.unit = "native",
+                                          gp = gpar(col=sur_dat$event),
+                                          height = unit(50, "cm")),
+                       T_stage = sur_dat$x1,
+                       N_stage = sur_dat$x2,
+                       # CEA = sur_dat$x3,
+                       CEA = log(sur_dat$x3),
+                       col = list(CEA=col_CEA,
+                                  T_stage=c("T1-2"="#66CCFF", "T3"="#CCFF99", "T4a"="#FF6633", "T4b"="red"),
+                                  N_stage=c("N1"="#99FFFF", "N2a"="#99FF99", "N2b"="red")),
+                       annotation_height = unit(c(3,3,0.6,0.6,0.6), "cm"),
+                       annotation_legend_param = list(
+                         CEA = list(
+                           title = "CEA",
+                           at = c(log(0.1), log(5), log(50)),
+                           # at = c(0.1, 5, 50),
+                           labels = c("0.1","5", ">50")
+                         )))
+heatmap_1<-Heatmap(zero_row_mat, name = "value", cluster_columns = FALSE,top_annotation = ha)
+draw(heatmap_1,padding = unit(c(10, 26, 10, 2), "mm"))
+annotations = c("Risk","Time","T_stage", "N_stage", "CEA")
+for (element in annotations){
+  if (element %in% c("Risk","Time")) position_x = -12 else position_x = -5
+  decorate_annotation(element, 
+          {grid.text(element, unit(position_x, "mm"),just = "right", gp = gpar(fontsize=12))})
+}
+```
+
+
+## 展示模型的校准曲线 calibration curve
+
+从校准曲线的结果来看，模型的DFS和实际的DFS很接近，校准度偏差较小。
+
+```{r,message=FALSE,warning=FALSE,results="hide"}
+data_list<-list(all.X)
+for (i in 1:1){
+  for (j in 1:3){
+    All.data<-data_list[[i]]
+    u<-switch(j, 1, 3, 5)
+    tt<-"DFS"
+    ss<-switch(i, "training", "validation")
+    xlab<-paste("Predicated ",u,"-year ",tt)
+    ylab<-paste("Actual ",u,"-year ",tt)
+    dd<-datadist(All.data)
+    options(datadist='dd')
+    coxm <- cph(Surv(time, status==1)~x.T_+x.N_+rcs(x.CEA_,3),
+                x=T,y=T,data=All.data, surv=T, time.inc=u*365)
+    
+    cal<-calibrate(coxm,u=u*365,cmethod='KM',m=80, B=100)
+    png(paste("plots/",u,"-year ",tt,"_",ss,".png", sep = ""),
+        width = 1000, height = 1000,units = "px",res=160)
+    plot(cal,xlim = c(0,1),ylim= c(0,1),
+         errbar.col=c(rgb(0,0,0,maxColorValue=255)),col=c(rgb(255,0,0,maxColorValue=255)),
+         xlab = xlab, ylab = ylab,subtitles=F
+         # ,cex.subtitles = 0.6
+         )
+    abline(0,1,lty=3,lwd=2,col=c(rgb(0,0,255,maxColorValue= 255)))
+    dev.off()
+  }
+}
+```
+
+预测1年生存率的校准曲线：
+
+<img src="D:/data_work/CEA/plots/1-year DFS_training.png" style="width:600px;height:600px">
+
+预测3年生存率的校准曲线：
+
+<img src="D:/data_work/CEA/plots/3-year DFS_training.png" style="width:600px;height:600px">
+
+预测5年生存率的校准曲线：
+
+<img src="D:/data_work/CEA/plots/5-year DFS_training.png" style="width:600px;height:600px">
+
+
+
